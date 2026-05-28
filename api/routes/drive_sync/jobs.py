@@ -19,7 +19,14 @@ async def _proxy_get(path: str, params: dict | None = None) -> JSONResponse:
     url = f"{_ds_url()}{path}"
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.get(url, params=params or {})
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = {"detail": resp.text or resp.reason_phrase}
+            return JSONResponse(status_code=resp.status_code, content=detail)
         return JSONResponse(content=resp.json())
 
 
@@ -28,7 +35,14 @@ async def _proxy_post(path: str, json_body: dict | None = None) -> JSONResponse:
     url = f"{_ds_url()}{path}"
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(url, json=json_body or {})
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = {"detail": resp.text or resp.reason_phrase}
+            return JSONResponse(status_code=resp.status_code, content=detail)
         return JSONResponse(content=resp.json())
 
 
@@ -37,7 +51,14 @@ async def _proxy_delete(path: str, json_body: dict | None = None) -> JSONRespons
     url = f"{_ds_url()}{path}"
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.delete(url, json=json_body or {})
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = {"detail": resp.text or resp.reason_phrase}
+            return JSONResponse(status_code=resp.status_code, content=detail)
         return JSONResponse(content=resp.json())
 
 
