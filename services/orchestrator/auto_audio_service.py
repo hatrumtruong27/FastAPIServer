@@ -486,6 +486,27 @@ class AutoAudioService:
             return data
         return []
 
+    def _fetch_story_metadata(self, story_id: str) -> dict:
+        """Fetch a single story's metadata (title, etc.) from the external API."""
+        try:
+            data = self._external_get(f"/api/v1/story/{story_id}")
+            if isinstance(data, dict):
+                return data.get("data", data)
+            return {}
+        except Exception:
+            return {}
+
+    def _build_chapter_id_map(self, story_id: str, chapter_indices: list[int]) -> dict[int, str]:
+        """Fetch chapters and map chapter index to chapter ID for a given set of indices."""
+        chapters = self._fetch_story_chapters(story_id)
+        chapter_map: dict[int, str] = {}
+        for ch in chapters:
+            idx = ch.get("index") or ch.get("chapterNumber") or ch.get("chapter_number") or 0
+            cid = ch.get("chapterId") or ch.get("id") or ""
+            if int(idx) in chapter_indices and cid:
+                chapter_map[int(idx)] = str(cid)
+        return chapter_map
+
     def _fetch_story_audio(self, story_id: str) -> list[dict]:
         data = self._external_get(f"/api/v1/story/{story_id}/audio")
         if isinstance(data, dict):
@@ -510,10 +531,13 @@ class AutoAudioService:
         if session.test_mode:
             session.add_log(2, f"Test mode: checking {len(story_ids)} test story IDs")
             stories_raw: list[dict] = [
-                {"storyId": sid, "title": f"Test Story {sid[:8]}", "_chapters": self._fetch_story_chapters(sid)}
+                {**story_metadata.get(sid, {}), "storyId": sid, "_chapters": self._fetch_story_chapters(sid)}
                 for sid in story_ids
                 if self._fetch_story_chapters(sid)
             ]
+            for raw in stories_raw:
+                if "title" not in raw or not raw["title"]:
+                    raw["title"] = f"Test Story {raw.get('storyId', sid)[:8]}"
         else:
             session.add_log(2, f"Discovering stories with missing audio among {len(story_ids)} stories...")
             stories_raw = [
@@ -694,6 +718,23 @@ class AutoAudioService:
             resp.raise_for_status()
             return resp.json()
 
+    def _bedread_download_chapter(self, batch_id: str, chapter_num: int) -> Optional[Path]:
+        """Download a single chapter's audio file from BedReadVoices. Returns local temp path."""
+        url = f"{_get_bedreadvoices_url()}/api/bedread/jobs/{batch_id}/download?chapter={chapter_num}"
+        try:
+            with httpx.Client(timeout=300.0) as client:
+                resp = client.get(url)
+                if resp.status_code == 404:
+                    return None
+                resp.raise_for_status()
+            tmp_dir = Path(tempfile.gettempdir()) / f"bedread_auto_{batch_id}"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            out_path = tmp_dir / f"chapter_{chapter_num}.wav"
+            out_path.write_bytes(resp.content)
+            return out_path
+        except Exception:
+            return None
+
     def _get_batch_output_dir(self, batch_id: str) -> Optional[Path]:
         base = _get_bedreadvoices_output_base()
         output_dir = base / batch_id
@@ -731,53 +772,62 @@ class AutoAudioService:
             session.add_log(4, f"Batch job for '{story.story_title}' failed", level="error")
             return result
 
-        output_dir = self._get_batch_output_dir(batch_id)
+        session.set_step(6, f"Downloading {len(completed_files)} audio files from BedReadVoices", story=story.story_title)
 
-        session.set_step(6, f"Uploading {len(completed_files)} audio files for {story.story_title}", story=story.story_title)
-
-        chapter_id_by_index: dict[int, str] = {
-            c.chapter_index: c.chapter_id for c in story.missing_chapters
-        }
+        chapter_indices = [int(f.get("chapter_index", 0) or 0) for f in completed_files]
+        chapter_id_by_index = self._build_chapter_id_map(story.story_id, chapter_indices)
 
         for i, file_info in enumerate(completed_files):
             if session._stopping:
                 break
 
-            session.set_step(6, f"Uploading ({i + 1}/{len(completed_files)}) {story.story_title}", story=story.story_title)
+            chapter_index = int(file_info.get("chapter_index", 0) or 0)
+            chapter_id = chapter_id_by_index.get(chapter_index, "")
 
-            chapter_id = chapter_id_by_index.get(int(file_info.get("chapter_index", 0) or 0), "")
+            if not chapter_id:
+                session.add_log(6, f"Chapter index {chapter_index}: no chapter ID found in server response — skipping upload", level="error")
+                result.upload_errors.append(f"Chapter {chapter_index}: missing chapter ID")
+                continue
 
-            local_path: Optional[Path] = None
-            if output_dir:
-                local_path = output_dir / file_info["filename"]
-                if local_path is not None and not local_path.exists():
-                    local_path = None
+            session.set_step(6, f"Downloading chapter {i + 1}/{len(completed_files)} for {story.story_title}", story=story.story_title)
+            session.add_log(6, f"Downloading chapter {chapter_index} from BedReadVoices (batch_id={batch_id})")
 
-            if local_path and local_path.exists():
-                ok = self._upload_audio_to_story(
-                    session, story.story_id,
-                    chapter_id,
-                    local_path,
-                    voice,
-                )
-                if ok:
-                    result.chapters_uploaded += 1
-                    self._delete_local_audio_files(session, local_path)
-                else:
-                    result.upload_errors.append(f"Chapter {file_info['chapter_index']}: upload failed")
+            local_path = self._bedread_download_chapter(batch_id, chapter_index)
 
-        if output_dir:
-            self._delete_batch_output_dir(session, batch_id, output_dir)
+            if local_path is None or not local_path.exists():
+                session.add_log(6, f"Failed to download chapter {chapter_index} from BedReadVoices", level="error")
+                result.upload_errors.append(f"Chapter {chapter_index}: download failed")
+                continue
+
+            session.add_log(6, f"Downloaded chapter {chapter_index}: {local_path.stat().st_size} bytes")
+            ok = self._upload_audio_to_story(
+                session, story.story_id,
+                chapter_id,
+                local_path,
+                voice,
+            )
+            if ok:
+                result.chapters_uploaded += 1
+                self._delete_local_audio_files(session, local_path)
+            else:
+                result.upload_errors.append(f"Chapter {chapter_index}: upload failed")
+
+        session.set_step(6, f"Uploaded {result.chapters_uploaded}/{len(completed_files)} audio files for {story.story_title}", story=story.story_title)
+
+        temp_batch_dir = Path(tempfile.gettempdir()) / f"bedread_auto_{batch_id}"
+        if temp_batch_dir.exists():
+            self._delete_batch_output_dir(session, batch_id, temp_batch_dir)
 
         return result
 
     def _delete_batch_output_dir(self, session: AutoAudioSession, batch_id: str, output_dir: Path) -> None:
+        """Remove the temp batch download directory after all chapters are processed."""
         try:
             if output_dir.exists():
                 shutil.rmtree(output_dir)
-                session.add_log(9, f"Removed batch output directory: {output_dir} (batch_id={batch_id})")
+                session.add_log(9, f"Removed batch temp directory: {output_dir}")
         except Exception as exc:
-            session.add_log(9, f"Failed to remove batch directory {output_dir}: {exc}", level="warning")
+            session.add_log(9, f"Failed to remove temp directory {output_dir}: {exc}", level="warning")
 
 
     def _upload_audio_to_story(
@@ -993,11 +1043,15 @@ class AutoAudioService:
                 session.add_log(0, f"Test mode: using {len(test_story_ids)} test story IDs")
 
             needing_update_ids: set[str] = set()
+            needing_update_meta: dict[str, dict] = {}
             if session.phase == "phase1":
                 if session.test_mode:
                     needing_update_ids = set(test_story_ids)
-                    needing_update_raw: list[dict] = []
                     session.add_log(1, f"Test mode: checking {len(needing_update_ids)} test story IDs")
+                    for sid in test_story_ids:
+                        meta = self._fetch_story_metadata(sid)
+                        if meta:
+                            needing_update_meta[sid] = meta
                 else:
                     session.set_step(1, "Fetching stories needing update")
                     session.add_log(1, "Phase 1: Fetching stories needing update...")
@@ -1006,6 +1060,10 @@ class AutoAudioService:
                         str(s.get("storyId") or s.get("story_id") or s.get("id"))
                         for s in needing_update_raw
                         if s.get("storyId") or s.get("story_id") or s.get("id")
+                    }
+                    needing_update_meta = {
+                        str(s.get("storyId") or s.get("story_id") or s.get("id")): s
+                        for s in needing_update_raw
                     }
                 session.add_log(1, f"Found {len(needing_update_ids)} stories needing update")
 
@@ -1019,10 +1077,7 @@ class AutoAudioService:
                     return
 
                 session.set_step(1, "Discovering missing audio in stories needing update")
-                phase1_meta: dict[str, dict] = {}
-                if needing_update_raw:
-                    phase1_meta = {s.get("storyId") or s.get("story_id") or s.get("id"): s for s in needing_update_raw}
-                phase1_missing = self._discover_stories_missing_audio(session, list(needing_update_ids), phase1_meta)
+                phase1_missing = self._discover_stories_missing_audio(session, list(needing_update_ids), needing_update_meta)
                 session.add_log(1, f"Phase 1: {len(phase1_missing)} stories with missing audio")
 
                 if not phase1_missing:
@@ -1076,6 +1131,11 @@ class AutoAudioService:
                 if session.test_mode:
                     all_story_ids = list(test_story_ids)
                     session.add_log(1, f"Test mode: checking {len(all_story_ids)} test story IDs")
+                    all_stories = [{"storyId": sid} for sid in test_story_ids]
+                    for s in all_stories:
+                        meta = self._fetch_story_metadata(s["storyId"])
+                        if meta:
+                            s.update(meta)
                 else:
                     session.set_step(1, "Fetching all published stories")
                     session.add_log(1, "Phase 2: Fetching all published stories...")
@@ -1153,6 +1213,11 @@ class AutoAudioService:
                 if session.test_mode:
                     recent_story_ids = list(test_story_ids[:phase_limit])
                     session.add_log(1, f"Test mode: checking {len(recent_story_ids)} test story IDs (limit={phase_limit})")
+                    recent_stories = [{"storyId": sid} for sid in test_story_ids[:phase_limit]]
+                    for s in recent_stories:
+                        meta = self._fetch_story_metadata(s["storyId"])
+                        if meta:
+                            s.update(meta)
                 else:
                     session.set_step(1, f"Fetching {phase_limit} most recently updated stories")
                     session.add_log(1, f"Phase 3: Fetching {phase_limit} most recently updated stories...")

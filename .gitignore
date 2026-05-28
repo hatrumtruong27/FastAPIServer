@@ -7,8 +7,10 @@ FastAPIServer/BedReadDriveSync/
 
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyc
+**/*.pyc
 *.pyo
 *.egg-info/
 .eggs/
