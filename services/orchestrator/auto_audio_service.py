@@ -178,6 +178,7 @@ class AutoAudioSession:
     finished_at: Optional[str]
     error: str
     story_results: list[dict] = field(default_factory=list)
+    completed_stories: set[str] = field(default_factory=set)
     _stopping: bool = field(default=False)
     _lock: Lock = field(default_factory=Lock)
     limit: int = 20
@@ -201,6 +202,7 @@ class AutoAudioSession:
                 "finished_at": self.finished_at,
                 "error": self.error,
                 "story_results": self.story_results,
+                "completed_stories": list(self.completed_stories),
             }
 
     def add_log(self, step: int, message: str, level: str = "info") -> None:
@@ -242,6 +244,10 @@ class AutoAudioSession:
     def add_story_result(self, result: dict) -> None:
         with self._lock:
             self.story_results.append(result)
+
+    def record_completed_story(self, story_id: str) -> None:
+        with self._lock:
+            self.completed_stories.add(story_id)
 
 
 class AutoAudioService:
@@ -403,6 +409,50 @@ class AutoAudioService:
             self._persist_sessions(history[:100])
         except Exception as exc:
             logger.warning("Failed to persist auto audio session history: %s", exc)
+
+    # ── Completed-story tracking (per-phase, persistent across sessions) ──
+
+    def _get_completed_stories_path(self, phase: str) -> Path:
+        return self._logs_dir / f"completed_stories_{phase}.json"
+
+    def _load_completed_stories(self, phase: str) -> set[str]:
+        """Return set of story IDs already successfully processed in this phase."""
+        path = self._get_completed_stories_path(phase)
+        if not path.exists():
+            return set()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return set(data.get("story_ids", []))
+        except Exception:
+            return set()
+
+    def _save_completed_stories(self, phase: str, completed: set[str]) -> None:
+        path = self._get_completed_stories_path(phase)
+        try:
+            path.write_text(json.dumps({"story_ids": sorted(completed)}, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to save completed stories for phase %s: %s", phase, exc)
+
+    def _skip_completed_stories(
+        self,
+        session: AutoAudioSession,
+        stories: list[StoryMissingAudio],
+    ) -> list[StoryMissingAudio]:
+        """Filter out story IDs that were already successfully completed in this phase."""
+        if session.phase not in ("phase1", "phase2", "phase3"):
+            return stories
+        completed = self._load_completed_stories(session.phase)
+        if not completed:
+            return stories
+
+        skipped = [s for s in stories if s.story_id in completed]
+        remaining = [s for s in stories if s.story_id not in completed]
+        if skipped:
+            session.add_log(
+                3,
+                f"Skipping {len(skipped)} already-processed story(ies) (found {len(remaining)} remaining)",
+            )
+        return remaining
 
     def _save_session_log(self, session: AutoAudioSession) -> None:
         try:
@@ -1103,6 +1153,16 @@ class AutoAudioService:
                 ])
                 _update_chapter_progress(phase1_missing)
 
+                phase1_missing = self._skip_completed_stories(session, phase1_missing)
+                if not phase1_missing:
+                    session.add_log(3, "All phase 1 stories already processed — nothing to do")
+                    session.set_status("completed")
+                    session.add_log(11, "Auto audio session completed successfully")
+                    session.set_step(11, "Saving session log")
+                    self._save_session_log(session)
+                    self._persist_history(session)
+                    return
+
                 session.set_step(3, "Processing stories needing update")
                 session.update_progress(0, len(phase1_missing))
 
@@ -1125,6 +1185,10 @@ class AutoAudioService:
 
                     session.set_step(7, f"Completed: {story.story_title}", story=story.story_title)
                     session.add_log(7, f"Done: generated={result.chapters_generated}, uploaded={result.chapters_uploaded}")
+
+                    if result.chapters_uploaded > 0:
+                        session.record_completed_story(story.story_id)
+                        self._save_completed_stories(session.phase, session.completed_stories)
 
                     rest_seconds = _get_settings().get("auto_audio_rest_seconds", 30)
                     if i + 1 < len(phase1_missing) and rest_seconds > 0:
@@ -1184,6 +1248,16 @@ class AutoAudioService:
                 ])
                 _update_chapter_progress(phase2_missing)
 
+                phase2_missing = self._skip_completed_stories(session, phase2_missing)
+                if not phase2_missing:
+                    session.add_log(3, "All phase 2 stories already processed — nothing to do")
+                    session.set_status("completed")
+                    session.add_log(11, "Auto audio session completed successfully")
+                    session.set_step(11, "Saving session log")
+                    self._save_session_log(session)
+                    self._persist_history(session)
+                    return
+
                 session.set_step(3, "Processing stories with missing audio")
                 session.update_progress(0, len(phase2_missing))
 
@@ -1206,6 +1280,10 @@ class AutoAudioService:
 
                     session.set_step(7, f"Completed: {story.story_title}", story=story.story_title)
                     session.add_log(7, f"Done: generated={result.chapters_generated}, uploaded={result.chapters_uploaded}")
+
+                    if result.chapters_uploaded > 0:
+                        session.record_completed_story(story.story_id)
+                        self._save_completed_stories(session.phase, session.completed_stories)
 
                     rest_seconds = _get_settings().get("auto_audio_rest_seconds", 30)
                     if i + 1 < len(phase2_missing) and rest_seconds > 0:
@@ -1267,6 +1345,16 @@ class AutoAudioService:
                 ])
                 _update_chapter_progress(phase3_missing)
 
+                phase3_missing = self._skip_completed_stories(session, phase3_missing)
+                if not phase3_missing:
+                    session.add_log(3, "All phase 3 stories already processed — nothing to do")
+                    session.set_status("completed")
+                    session.add_log(11, "Auto audio session completed successfully")
+                    session.set_step(11, "Saving session log")
+                    self._save_session_log(session)
+                    self._persist_history(session)
+                    return
+
                 session.set_step(3, "Processing recently updated stories with missing audio")
                 session.update_progress(0, len(phase3_missing))
 
@@ -1290,6 +1378,10 @@ class AutoAudioService:
                     session.set_step(7, f"Completed: {story.story_title}", story=story.story_title)
                     session.add_log(7, f"Done: generated={result.chapters_generated}, uploaded={result.chapters_uploaded}")
 
+                    if result.chapters_uploaded > 0:
+                        session.record_completed_story(story.story_id)
+                        self._save_completed_stories(session.phase, session.completed_stories)
+
                     rest_seconds = _get_settings().get("auto_audio_rest_seconds", 30)
                     if i + 1 < len(phase3_missing) and rest_seconds > 0:
                         session.set_step(10, f"Resting {rest_seconds}s before next story")
@@ -1309,6 +1401,8 @@ class AutoAudioService:
             session.set_step(11, "Saving session log")
             self._save_session_log(session)
             self._persist_history(session)
+
+            self._active_session = None
 
         except Exception as exc:
             logger.exception("Auto audio session error")
