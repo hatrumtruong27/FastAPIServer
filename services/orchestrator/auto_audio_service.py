@@ -289,6 +289,26 @@ class AutoAudioService:
             resp.raise_for_status()
             return resp
 
+    def _external_put_with_retry(self, url: str, data: bytes, content_type: str = "audio/wav", extra_headers: Optional[dict] = None, max_retries: int = 3) -> httpx.Response:
+        headers = {"Content-Type": content_type}
+        if extra_headers:
+            headers.update(extra_headers)
+        last_exc: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                with httpx.Client(timeout=120.0) as client:
+                    resp = client.put(url, content=data, headers=headers)
+                    resp.raise_for_status()
+                    return resp
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 503 and attempt < max_retries - 1:
+                    last_exc = exc
+                    import time
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+        raise last_exc or RuntimeError("Unexpected retry failure")
+
     def _bedread_post(self, path: str, json_data: Optional[dict] = None) -> dict:
         """POST to BedReadVoices service."""
         url = f"{_get_bedreadvoices_url()}{path}"
@@ -917,7 +937,7 @@ class AutoAudioService:
                 return False
 
             required_headers = presigned_resp.get("requiredHeaders", {})
-            self._external_put(presigned_url, compressed.data, mime_type, required_headers)
+            self._external_put_with_retry(presigned_url, compressed.data, mime_type, required_headers)
 
             self._external_post(
                 f"/api/v1/story/{story_id}/chapter/{chapter_id}/audio/complete",
@@ -928,7 +948,7 @@ class AutoAudioService:
             return True
 
         except httpx.HTTPStatusError as exc:
-            session.add_log(6, f"HTTP error uploading chapter {chapter_id}: {exc.response.status_code} {exc.response.text}", level="error")
+            session.add_log(6, f"HTTP error uploading chapter {chapter_id}: {exc.response.status_code} {exc.response.text} (retries exhausted)", level="error")
             return False
         except Exception as exc:
             session.add_log(6, f"Error uploading chapter {chapter_id}: {exc}", level="error")
