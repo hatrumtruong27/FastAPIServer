@@ -41,8 +41,7 @@ def get_status() -> AutoAudioSessionResponse | None:
     session = service.get_status()
     if session is None:
         return None
-    data = session.to_dict()
-    return AutoAudioSessionResponse(**data)
+    return AutoAudioSessionResponse(**session)
 
 
 @router.post("/stop")
