@@ -25,8 +25,8 @@ app = FastAPI(
     description=(
         "Single entry point for the CreateStory frontend. "
         "Routes requests to downstream microservices: NovelCrawler (scraping), "
-        "BedReadVoices (TTS), and BedReadDriveSync (Drive sync). "
-        "Orchestrates the auto-audio workflow."
+        "BedReadVoices (TTS), AutoAudio (auto-audio orchestration), "
+        "and BedReadDriveSync (Drive sync)."
     ),
     version="1.0.0",
 )
@@ -65,6 +65,7 @@ def api_info() -> dict:
         "downstream_services": {
             "NovelCrawler": "http://localhost:8002",
             "BedReadVoices": "http://localhost:8001",
+            "AutoAudio": "http://localhost:8004",
             "BedReadDriveSync": "http://localhost:8003",
         },
     }

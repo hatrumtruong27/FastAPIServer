@@ -92,6 +92,15 @@ def get_session(session_id: str) -> AutoAudioSessionResponse:
     return AutoAudioSessionResponse(**session_data)
 
 
+@router.post("/history/batch-delete")
+def delete_sessions_batch(request: dict) -> dict:
+    """Delete multiple sessions from history in a single operation."""
+    service = get_auto_audio_service()
+    session_ids = request.get("session_ids", [])
+    deleted = service.delete_sessions_batch(session_ids)
+    return {"deleted": deleted, "requested": len(session_ids)}
+
+
 @router.delete("/history/{session_id}")
 def delete_session(session_id: str) -> dict:
     """Delete a session from history."""
