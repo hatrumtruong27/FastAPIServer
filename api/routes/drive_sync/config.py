@@ -100,3 +100,8 @@ async def update_sync_config(body: dict) -> JSONResponse:
 @router.get("/config/url", response_model=DriveSyncUrlResponse)
 async def get_main_be_url() -> JSONResponse:
     return await _proxy_get("/api/drive-sync/config/url")
+
+
+@router.get("/config/validate-token")
+async def validate_bearer_token() -> JSONResponse:
+    return await _proxy_get("/api/drive-sync/config/validate-token")
