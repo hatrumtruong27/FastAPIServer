@@ -17,7 +17,7 @@ class SettingsResponse(BaseModel):
     auto_audio_batch_window: int = Field(default=2, ge=1, le=2, description="Max Auto Audio story batches in flight")
     auto_audio_external_api_base: str = Field(default="", description="External API base URL for auto audio")
     auto_audio_test_story_ids: list[str] = Field(default_factory=list, description="Story IDs used in test mode")
-    tts_concurrency: int | None = Field(default=None, ge=1, le=8, description="Number of concurrent TTS worker threads, or null for auto")
+    tts_concurrency: int = Field(default=1, ge=1, le=2, description="Number of concurrent Kokoro worker threads")
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -32,4 +32,4 @@ class SettingsUpdateRequest(BaseModel):
     auto_audio_batch_window: int | None = Field(default=None, ge=1, le=2)
     auto_audio_external_api_base: str | None = Field(default=None)
     auto_audio_test_story_ids: list[str] | None = Field(default=None)
-    tts_concurrency: int | None = Field(default=None, ge=1, le=8)
+    tts_concurrency: int | None = Field(default=None, ge=1, le=2)
