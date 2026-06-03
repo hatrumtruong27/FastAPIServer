@@ -75,3 +75,23 @@ async def update_chapter_count(body: dict) -> JSONResponse:
 @router.post("/update-chapters/{folder_id}")
 async def update_chapters(folder_id: str) -> JSONResponse:
     return await _proxy_post(f"/api/drive-sync/update-chapters/{folder_id}")
+
+
+@router.get("/content-update/search")
+async def search_content_update_story(keyword: str) -> JSONResponse:
+    return await _proxy_get("/api/drive-sync/content-update/search", params={"keyword": keyword})
+
+
+@router.get("/content-update/folder")
+async def inspect_content_update_folder(folder_name: str) -> JSONResponse:
+    return await _proxy_get("/api/drive-sync/content-update/folder", params={"folder_name": folder_name})
+
+
+@router.get("/content-update/scan/{story_id}")
+async def scan_content_update_story(story_id: str) -> JSONResponse:
+    return await _proxy_get(f"/api/drive-sync/content-update/scan/{story_id}")
+
+
+@router.post("/content-update/update-chapter")
+async def update_content_chapter(body: dict) -> JSONResponse:
+    return await _proxy_post("/api/drive-sync/content-update/update-chapter", json_body=body)
