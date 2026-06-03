@@ -38,6 +38,7 @@ _SETTINGS_EXAMPLE = {
     "crawl_auto_max_chapters": False,
     "auto_audio_rest_seconds": 0,
     "auto_audio_upload_workers": 3,
+    "auto_audio_batch_window": 2,
     "auto_audio_external_api_base": "",
     "auto_audio_test_story_ids": [
         "ce6176c4-aeb5-4ee1-847f-ee56df64a386",
@@ -120,6 +121,8 @@ async def update_settings(req: SettingsUpdateRequest) -> SettingsResponse:
         data["auto_audio_rest_seconds"] = req.auto_audio_rest_seconds
     if req.auto_audio_upload_workers is not None:
         data["auto_audio_upload_workers"] = req.auto_audio_upload_workers
+    if req.auto_audio_batch_window is not None:
+        data["auto_audio_batch_window"] = req.auto_audio_batch_window
     if req.auto_audio_external_api_base is not None:
         data["auto_audio_external_api_base"] = req.auto_audio_external_api_base
     if req.auto_audio_test_story_ids is not None:
