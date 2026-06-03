@@ -2,10 +2,11 @@
 
 import logging
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
-logger = logging.getLogger("api.main")
+_logger = logging.getLogger("api.main")
 
 from dotenv import load_dotenv
 
@@ -20,6 +21,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import auto_audio, bedread, crawl, results, settings, sites, drive_sync, tts
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Pre-populate caches on startup so first user requests don't pay cold-start cost.
+    _logger.info("FastAPIServer startup: warming caches...")
+    from services.orchestrator.auto_audio_service import get_auto_audio_service
+    try:
+        _ = get_auto_audio_service().get_history()
+        _logger.info("FastAPIServer startup: auto_audio history cache warmed.")
+    except Exception as exc:
+        _logger.warning("FastAPIServer startup: failed to warm auto_audio cache: %s", exc)
+    _logger.info("FastAPIServer startup: done.")
+    yield
+
+
 app = FastAPI(
     title="FastAPIServer — API Gateway",
     description=(
@@ -29,6 +45,7 @@ app = FastAPI(
         "and BedReadDriveSync (Drive sync)."
     ),
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
