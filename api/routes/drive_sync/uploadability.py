@@ -18,7 +18,7 @@ def _ds_url() -> str:
 async def _proxy_get(path: str, params: dict | None = None) -> JSONResponse:
     import httpx
     url = f"{_ds_url()}{path}"
-    async with httpx.AsyncClient(timeout=180.0) as client:
+    async with httpx.AsyncClient(timeout=600.0) as client:
         resp = await client.get(url, params=params or {})
         try:
             resp.raise_for_status()
@@ -34,7 +34,7 @@ async def _proxy_get(path: str, params: dict | None = None) -> JSONResponse:
 async def _proxy_post(path: str, json_body: dict | None = None) -> JSONResponse:
     import httpx
     url = f"{_ds_url()}{path}"
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    async with httpx.AsyncClient(timeout=600.0) as client:
         resp = await client.post(url, json=json_body or {})
         try:
             resp.raise_for_status()
