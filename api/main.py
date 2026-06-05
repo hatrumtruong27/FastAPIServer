@@ -19,11 +19,19 @@ if str(_project_root) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import auto_audio, bedread, crawl, results, settings, sites, drive_sync, tts
+from api.db import SessionLocal, init_db
+from api.migration import import_existing_shared_state
+from api.routes import auth, auto_audio, bedread, crawl, results, settings, sites, drive_sync, tts
+from api.routes.drive_sync.config import _DRIVE_SYNC_CONFIG_EXAMPLE
+from api.routes.settings import _SETTINGS_EXAMPLE
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _logger.info("FastAPIServer startup: initializing database...")
+    init_db()
+    with SessionLocal() as db:
+        import_existing_shared_state(db, _SETTINGS_EXAMPLE, _DRIVE_SYNC_CONFIG_EXAMPLE)
     # Pre-populate caches on startup so first user requests don't pay cold-start cost.
     _logger.info("FastAPIServer startup: warming caches...")
     from services.orchestrator.auto_audio_service import get_auto_audio_service
@@ -56,6 +64,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(settings.router)
 app.include_router(sites.router)
 app.include_router(crawl.router)

@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
-router = APIRouter(prefix="/api/results", tags=["Results"])
+from api.auth import require_active_user
+
+router = APIRouter(prefix="/api/results", tags=["Results"], dependencies=[Depends(require_active_user)])
 
 
 def _nc_url() -> str:

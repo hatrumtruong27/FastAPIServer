@@ -5,12 +5,14 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Body, Header, Query, Response
+from fastapi import APIRouter, Body, Depends, Header, Query, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from api.auth import require_active_user
 from api.config import load_external_api_config
 
 router = APIRouter(prefix="/api/bedread", tags=["BedRead"])
+_AUTH = [Depends(require_active_user)]
 
 
 def _bv_url() -> str:
@@ -55,12 +57,12 @@ async def _proxy_stream(path: str, timeout: float = 300.0) -> StreamingResponse:
         return StreamingResponse(resp.aiter_bytes(), media_type=content_type, headers=hdrs)
 
 
-@router.get("/stories")
+@router.get("/stories", dependencies=_AUTH)
 async def list_stories() -> JSONResponse:
     return await _proxy_get("/api/bedread/stories")
 
 
-@router.get("/stories/search")
+@router.get("/stories/search", dependencies=_AUTH)
 async def search_stories(
     keyword: Optional[str] = Query(None),
     categories: Optional[str] = Query(None),
@@ -85,7 +87,7 @@ async def search_stories(
     return await _proxy_get("/api/bedread/stories/search", params=params)
 
 
-@router.get("/stories/{story_id}/chapters")
+@router.get("/stories/{story_id}/chapters", dependencies=_AUTH)
 async def get_story_chapters(
     story_id: str,
     x_user_id: Optional[str] = Header(None, alias="x-user-id"),
@@ -96,7 +98,7 @@ async def get_story_chapters(
     return await _proxy_get(f"/api/bedread/stories/{story_id}/chapters", headers=headers)
 
 
-@router.post("/generate")
+@router.post("/generate", dependencies=_AUTH)
 async def start_batch_generate(
     request: dict = Body(...),
     x_user_id: Optional[str] = Header(None, alias="x-user-id"),
@@ -107,32 +109,32 @@ async def start_batch_generate(
     return await _proxy_post("/api/bedread/generate", json_body=request, headers=headers)
 
 
-@router.get("/jobs/{batch_id}")
+@router.get("/jobs/{batch_id}", dependencies=_AUTH)
 async def get_batch_status(batch_id: str) -> JSONResponse:
     return await _proxy_get(f"/api/bedread/jobs/{batch_id}")
 
 
-@router.get("/jobs")
+@router.get("/jobs", dependencies=_AUTH)
 async def list_all_batch_jobs() -> JSONResponse:
     return await _proxy_get("/api/bedread/jobs")
 
 
-@router.delete("/jobs/{batch_id}")
+@router.delete("/jobs/{batch_id}", dependencies=_AUTH)
 async def cancel_batch(batch_id: str) -> JSONResponse:
     return await _proxy_delete(f"/api/bedread/jobs/{batch_id}")
 
 
-@router.post("/jobs/{batch_id}/remove")
+@router.post("/jobs/{batch_id}/remove", dependencies=_AUTH)
 async def remove_batch(batch_id: str) -> JSONResponse:
     return await _proxy_post(f"/api/bedread/jobs/{batch_id}/remove")
 
 
-@router.get("/jobs/{batch_id}/download")
+@router.get("/jobs/{batch_id}/download", dependencies=_AUTH)
 async def download_chapter(batch_id: str, chapter: int = Query(...)) -> StreamingResponse:
     return await _proxy_stream(f"/api/bedread/jobs/{batch_id}/download?chapter={chapter}")
 
 
-@router.get("/jobs/{batch_id}/zip")
+@router.get("/jobs/{batch_id}/zip", dependencies=_AUTH)
 async def download_batch_zip(batch_id: str) -> StreamingResponse:
     return await _proxy_stream(f"/api/bedread/jobs/{batch_id}/zip")
 

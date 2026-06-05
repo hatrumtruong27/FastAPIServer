@@ -1,28 +1,22 @@
-"""Credential file upload for Drive Sync — saves to FastAPIServer/data/credentials/.
-
-BedReadDriveSync reads from the same shared location via _SHARED_CREDENTIALS_DIR
-in _paths.py, so no mirroring is needed.
-"""
+"""Credential upload for Drive Sync, backed by PostgreSQL."""
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+
+from api.auth import require_active_user, require_admin
+from api.db import get_db
+from api.repositories.shared_state import DRIVE_CREDENTIAL_NAME, SharedStateRepository
 
 router = APIRouter(tags=["Drive Sync"])
 
-# Absolute path to FastAPIServer root.
-#   credentials.py lives at: FastAPIServer/api/routes/drive_sync/credentials.py
-#   __file__.resolve() gives the absolute path at runtime.
-#   parents[0]=drive_sync/, [1]=routes/, [2]=api/, [3]=FastAPIServer/, [4]=Services/
-# _FASTAPI_CREDS_DIR: 4 chained .parent calls = parents[3] = FastAPIServer/
-#   Then / "data" / "credentials" = FastAPIServer/data/credentials
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _FASTAPI_CREDS_DIR = _PROJECT_ROOT / "data" / "credentials"
-
-# Fixed filename — must match BedReadDriveSync .env: GOOGLE_SERVICE_ACCOUNT_JSON=data/credentials/google-service-account.json
 _FIXED_CREDENTIALS_FILENAME = "google-service-account.json"
 
 
@@ -33,21 +27,27 @@ def _get_creds_dir() -> Path:
 
 
 @router.post("/credentials/upload")
-async def upload_credentials(file: UploadFile = File(...)) -> JSONResponse:
+async def upload_credentials(
+    db: Annotated[Session, Depends(get_db)],
+    _admin=Depends(require_admin),
+    file: UploadFile = File(...),
+) -> JSONResponse:
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided.")
 
     if not file.filename.endswith(".json"):
         raise HTTPException(status_code=400, detail="Only .json files are allowed.")
 
-    creds_dir = _get_creds_dir()
-    dest_path = creds_dir / _FIXED_CREDENTIALS_FILENAME
-
     try:
         contents = await file.read()
-        dest_path.write_bytes(contents)
+        SharedStateRepository(db).upsert_credential(
+            DRIVE_CREDENTIAL_NAME,
+            _FIXED_CREDENTIALS_FILENAME,
+            contents,
+            file.content_type or "application/json",
+        )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to write file: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Failed to save credentials: {exc}") from exc
 
     return JSONResponse(content={
         "success": True,
@@ -57,9 +57,17 @@ async def upload_credentials(file: UploadFile = File(...)) -> JSONResponse:
 
 
 @router.get("/credentials/exists")
-async def check_credentials_exists(filename: str) -> JSONResponse:
+async def check_credentials_exists(
+    filename: str,
+    db: Annotated[Session, Depends(get_db)],
+    _user=Depends(require_active_user),
+) -> JSONResponse:
+    stored = SharedStateRepository(db).get_credential(DRIVE_CREDENTIAL_NAME)
+    if stored is not None:
+        return JSONResponse(content={"exists": True, "filename": _FIXED_CREDENTIALS_FILENAME})
+
     creds_dir = _get_creds_dir()
-    # Always check the fixed filename regardless of what was passed
     check_name = _FIXED_CREDENTIALS_FILENAME if filename else _FIXED_CREDENTIALS_FILENAME
     exists = (creds_dir / check_name).is_file()
     return JSONResponse(content={"exists": exists, "filename": check_name})
+

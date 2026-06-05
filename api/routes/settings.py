@@ -1,4 +1,4 @@
-"""Settings API — persisted crawl defaults and user preferences."""
+"""Settings API: shared crawl defaults and user preferences."""
 
 from __future__ import annotations
 
@@ -6,11 +6,15 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
+from api.auth import require_active_user, require_admin
+from api.db import get_db
 from api.models.settings import SettingsResponse, SettingsUpdateRequest
+from api.repositories.shared_state import SETTINGS_KEY, SharedStateRepository
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +24,13 @@ SETTINGS_FILE = Path(__file__).parent.parent.parent / "data" / "user_settings.js
 
 
 def _write_example_file(path: Path, example: dict) -> None:
-    """Write example defaults to disk for the user to see and edit."""
+    """Write example defaults to disk for local visibility."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(example, f, indent=2)
     except Exception:
-        pass  # Non-critical — user can still see defaults in API response
+        pass
 
 
 _SETTINGS_EXAMPLE = {
@@ -51,6 +55,7 @@ _SETTINGS_EXAMPLE = {
 def _propagate_tts_concurrency(concurrency: int | None) -> None:
     """Tell BedReadVoices to update its TTS worker concurrency."""
     import httpx
+
     bv_url = os.environ.get("SERVICE_URLS_BedReadVoices", "http://localhost:8001").rstrip("/")
     if concurrency is None:
         concurrency = 1
@@ -63,43 +68,56 @@ def _propagate_tts_concurrency(concurrency: int | None) -> None:
         logger.warning("Failed to propagate tts_concurrency to BedReadVoices: %s", exc)
 
 
-def _load_settings() -> dict:
-    """Load settings from disk, returning defaults if absent or corrupted."""
+def _load_settings(db: Session) -> dict:
+    """Load settings from PostgreSQL, seeding from disk/defaults when needed."""
+    repo = SharedStateRepository(db)
+    stored = repo.get_setting(SETTINGS_KEY)
+    if stored is not None:
+        return {**_SETTINGS_EXAMPLE, **stored}
+
     try:
         SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
         if SETTINGS_FILE.exists():
             with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-                return {**_SETTINGS_EXAMPLE, **json.load(f)}
+                data = {**_SETTINGS_EXAMPLE, **json.load(f)}
+                repo.upsert_setting(SETTINGS_KEY, data)
+                return data
     except Exception as exc:
         logger.warning("Failed to load settings, using defaults: %s", exc)
-    # First load — write example defaults to disk for the user to see/edit
+
     _write_example_file(SETTINGS_FILE, _SETTINGS_EXAMPLE)
+    repo.upsert_setting(SETTINGS_KEY, _SETTINGS_EXAMPLE)
     return _SETTINGS_EXAMPLE
 
 
-def _save_settings(data: dict) -> None:
-    """Persist settings to disk."""
+def _save_settings(db: Session, data: dict) -> None:
+    """Persist settings to PostgreSQL."""
     try:
-        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        SharedStateRepository(db).upsert_setting(SETTINGS_KEY, data)
     except Exception as exc:
         logger.error("Failed to save settings: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to save settings.")
 
 
 @router.get("", response_model=SettingsResponse)
-async def get_settings() -> SettingsResponse:
-    """Return current user settings."""
-    data = _load_settings()
+async def get_settings(
+    db: Annotated[Session, Depends(get_db)],
+    _user=Depends(require_active_user),
+) -> SettingsResponse:
+    """Return current shared settings."""
+    data = _load_settings(db)
     _propagate_tts_concurrency(data.get("tts_concurrency"))
     return SettingsResponse(**data)
 
 
 @router.put("", response_model=SettingsResponse)
-async def update_settings(req: SettingsUpdateRequest) -> SettingsResponse:
-    """Partially update user settings. Only explicitly sent fields are updated."""
-    data = _load_settings()
+async def update_settings(
+    req: SettingsUpdateRequest,
+    db: Annotated[Session, Depends(get_db)],
+    _admin=Depends(require_admin),
+) -> SettingsResponse:
+    """Partially update shared settings. Only explicitly sent fields are updated."""
+    data = _load_settings(db)
 
     if req.theme is not None:
         if req.theme not in ("light", "dark"):
@@ -133,6 +151,7 @@ async def update_settings(req: SettingsUpdateRequest) -> SettingsResponse:
         data["tts_concurrency"] = req.tts_concurrency or 1
         _propagate_tts_concurrency(data["tts_concurrency"])
 
-    _save_settings(data)
+    _save_settings(db, data)
     logger.info("Settings updated: %s", data)
     return SettingsResponse(**data)
+

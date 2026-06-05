@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from api.auth import require_active_user
 from api.routes.drive_sync import config, dashboard, folders, history, jobs, uploadability, credentials
 
-router = APIRouter(prefix="/api/drive-sync", tags=["Drive Sync"])
+router = APIRouter(prefix="/api/drive-sync", tags=["Drive Sync"], dependencies=[Depends(require_active_user)])
 router.include_router(config.router)
 router.include_router(folders.router)
 router.include_router(uploadability.router)

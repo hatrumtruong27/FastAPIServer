@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field
 
+from api.auth import require_active_user
 from api.models.auto_audio import (
     AutoAudioHistoryEntry,
     AutoAudioPauseResponse,
@@ -16,7 +17,7 @@ from api.models.auto_audio import (
 )
 from services.orchestrator.auto_audio_service import get_auto_audio_service
 
-router = APIRouter(prefix="/api/auto-audio", tags=["Auto Audio"])
+router = APIRouter(prefix="/api/auto-audio", tags=["Auto Audio"], dependencies=[Depends(require_active_user)])
 
 
 @router.post("/start", response_model=StartSessionResponse)

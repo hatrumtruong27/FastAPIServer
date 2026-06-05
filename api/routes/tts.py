@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-router = APIRouter(prefix="/api/tts", tags=["TTS"])
+from api.auth import require_active_user
+
+router = APIRouter(prefix="/api/tts", tags=["TTS"], dependencies=[Depends(require_active_user)])
 
 
 def _bv_url() -> str:
