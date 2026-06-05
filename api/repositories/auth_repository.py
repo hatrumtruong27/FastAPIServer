@@ -29,6 +29,18 @@ class AuthRepository:
     def count_users(self) -> int:
         return self.db.scalar(select(func.count(User.id))) or 0
 
+    def count_admin_users(self, active_only: bool = False) -> int:
+        stmt = select(func.count(User.id)).where(User.role == "admin")
+        if active_only:
+            stmt = stmt.where(User.is_active.is_(True))
+        return self.db.scalar(stmt) or 0
+
+    def list_users(self) -> list[User]:
+        return list(self.db.scalars(select(User).order_by(User.created_at.asc(), User.email.asc())).all())
+
+    def get_first_admin_user(self) -> User | None:
+        return self.db.scalar(select(User).where(User.role == "admin").order_by(User.created_at.asc(), User.email.asc()))
+
     def get_user_by_email(self, email: str) -> User | None:
         return self.db.scalar(select(User).where(User.email == normalize_email(email)))
 
@@ -71,3 +83,14 @@ class AuthRepository:
         self.db.commit()
         return True
 
+    def revoke_user_refresh_tokens(self, user_id: uuid.UUID) -> int:
+        tokens = list(
+            self.db.scalars(
+                select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked_at.is_(None))
+            ).all()
+        )
+        now = datetime.now(timezone.utc)
+        for token in tokens:
+            token.revoked_at = now
+        self.db.commit()
+        return len(tokens)
