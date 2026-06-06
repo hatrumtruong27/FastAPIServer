@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.auth import require_active_user
@@ -62,6 +62,36 @@ async def start_batch_crawl(request: list[dict] = Body(...)) -> JSONResponse:
     """Start multiple crawl sessions at once."""
     result = await _forward_request("POST", "/api/crawl/start-batch", json_body=request)
     return result
+
+
+@router.post("/inkitt-cookies")
+async def update_inkitt_cookies(request: dict = Body(...)) -> JSONResponse:
+    """Update saved Inkitt login cookies in the NovelCrawler service."""
+    import httpx
+
+    url = f"{_nc_url()}/api/crawl/inkitt-cookies"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, json=request)
+        try:
+            content = resp.json()
+        except ValueError:
+            content = {"detail": resp.text or f"HTTP {resp.status_code}"}
+        return JSONResponse(content=content, status_code=resp.status_code)
+
+
+@router.post("/inkitt-cookies/status")
+async def check_inkitt_cookies(request: dict | None = Body(default=None)) -> JSONResponse:
+    """Check saved Inkitt login cookies in the NovelCrawler service."""
+    import httpx
+
+    url = f"{_nc_url()}/api/crawl/inkitt-cookies/status"
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        resp = await client.post(url, json=request or {})
+        try:
+            content = resp.json()
+        except ValueError:
+            content = {"detail": resp.text or f"HTTP {resp.status_code}"}
+        return JSONResponse(content=content, status_code=resp.status_code)
 
 
 @router.get("/stream")
