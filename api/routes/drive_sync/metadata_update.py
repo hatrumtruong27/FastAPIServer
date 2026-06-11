@@ -1,0 +1,66 @@
+"""Metadata update endpoints — proxy to BedReadDriveSync."""
+
+from __future__ import annotations
+
+import os
+
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+
+router = APIRouter(prefix="/metadata-update", tags=["Drive Sync"])
+
+
+def _ds_url() -> str:
+    return os.environ.get("SERVICE_URLS_BedReadDriveSync", "http://localhost:8003").rstrip("/")
+
+
+async def _proxy_get(path: str, params: dict | None = None) -> JSONResponse:
+    import httpx
+    url = f"{_ds_url()}{path}"
+    async with httpx.AsyncClient(timeout=600.0) as client:
+        resp = await client.get(url, params=params or {})
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = {"detail": resp.text or resp.reason_phrase}
+            return JSONResponse(status_code=resp.status_code, content=detail)
+        return JSONResponse(content=resp.json())
+
+
+async def _proxy_post(path: str, json_body: dict | None = None) -> JSONResponse:
+    import httpx
+    url = f"{_ds_url()}{path}"
+    async with httpx.AsyncClient(timeout=600.0) as client:
+        resp = await client.post(url, json=json_body or {})
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError:
+            try:
+                detail = resp.json()
+            except Exception:
+                detail = {"detail": resp.text or resp.reason_phrase}
+            return JSONResponse(status_code=resp.status_code, content=detail)
+        return JSONResponse(content=resp.json())
+
+
+@router.get("/check-all")
+async def check_all() -> JSONResponse:
+    return await _proxy_get("/api/drive-sync/metadata-update/check-all")
+
+
+@router.get("/check-updated")
+async def check_updated() -> JSONResponse:
+    return await _proxy_get("/api/drive-sync/metadata-update/check-updated")
+
+
+@router.get("/difference/{folder_id}/{story_id}/{field}")
+async def get_metadata_difference_detail(folder_id: str, story_id: str, field: str) -> JSONResponse:
+    return await _proxy_get(f"/api/drive-sync/metadata-update/difference/{folder_id}/{story_id}/{field}")
+
+
+@router.post("/update-metadata/{folder_id}/{story_id}")
+async def update_metadata(folder_id: str, story_id: str, body: dict) -> JSONResponse:
+    return await _proxy_post(f"/api/drive-sync/metadata-update/update-metadata/{folder_id}/{story_id}", json_body=body)
