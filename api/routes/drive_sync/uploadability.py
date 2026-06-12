@@ -95,3 +95,13 @@ async def scan_content_update_story(story_id: str) -> JSONResponse:
 @router.post("/content-update/update-chapter")
 async def update_content_chapter(body: dict) -> JSONResponse:
     return await _proxy_post("/api/drive-sync/content-update/update-chapter", json_body=body)
+
+
+@router.post("/content-update/batch-inspect")
+async def batch_inspect_content_folders(body: dict) -> JSONResponse:
+    return await _proxy_post("/api/drive-sync/content-update/batch-inspect", json_body=body)
+
+
+@router.post("/content-update/batch-update")
+async def batch_update_content_folders(body: dict) -> JSONResponse:
+    return await _proxy_post("/api/drive-sync/content-update/batch-update", json_body=body)
