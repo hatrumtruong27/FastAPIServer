@@ -11,7 +11,21 @@ router = APIRouter(tags=["Drive Sync"])
 
 
 def _ds_url() -> str:
-    return os.environ.get("SERVICE_URLS_BedReadDriveSync", "http://localhost:8003").rstrip("/")
+    """Return BedReadDriveSync base URL, checking env vars and SERVICE_URLS JSON."""
+    override = os.environ.get("SERVICE_URLS_BedReadDriveSync")
+    if override:
+        return override.rstrip("/")
+    urls_raw = os.environ.get("SERVICE_URLS", "{}")
+    try:
+        import json
+        service_urls = json.loads(urls_raw)
+        if isinstance(service_urls, dict):
+            url = service_urls.get("BedReadDriveSync")
+            if url:
+                return str(url).rstrip("/")
+    except Exception:
+        pass
+    return "http://localhost:8003"
 
 
 async def _proxy_get(path: str, params: dict | None = None) -> JSONResponse:

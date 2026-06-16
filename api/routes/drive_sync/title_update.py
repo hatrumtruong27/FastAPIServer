@@ -1,4 +1,4 @@
-"""Cover update endpoints — proxy to BedReadDriveSync."""
+"""Title update endpoints — proxy to BedReadDriveSync."""
 
 from __future__ import annotations
 
@@ -7,14 +7,16 @@ import os
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-router = APIRouter(prefix="/cover-update", tags=["Drive Sync"])
+router = APIRouter(prefix="/title-update", tags=["Drive Sync"])
 
 
 def _ds_url() -> str:
     """Return BedReadDriveSync base URL, checking env vars and SERVICE_URLS JSON."""
+    # Per-service env var takes priority (e.g. SERVICE_URLS_BedReadDriveSync=http://localhost:8003)
     override = os.environ.get("SERVICE_URLS_BedReadDriveSync")
     if override:
         return override.rstrip("/")
+    # Fall back to parsing the SERVICE_URLS JSON object
     urls_raw = os.environ.get("SERVICE_URLS", "{}")
     try:
         import json
@@ -51,7 +53,7 @@ async def _proxy_post(path: str, json_body: dict | None = None) -> JSONResponse:
     import httpx
     url = f"{_ds_url()}{path}"
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(url, json=json_body or {})
             try:
                 resp.raise_for_status()
@@ -68,14 +70,32 @@ async def _proxy_post(path: str, json_body: dict | None = None) -> JSONResponse:
 
 @router.get("/check-all")
 async def check_all() -> JSONResponse:
-    return await _proxy_get("/api/drive-sync/cover-update/check-all", timeout=120.0)
+    return await _proxy_get("/api/drive-sync/title-update/check-all", timeout=300.0)
 
 
-@router.get("/check-updated")
-async def check_updated() -> JSONResponse:
-    return await _proxy_get("/api/drive-sync/cover-update/check-updated")
+@router.get("/folder/{folder_id}/detail")
+async def get_folder_detail(folder_id: str) -> JSONResponse:
+    return await _proxy_get(
+        f"/api/drive-sync/title-update/folder/{folder_id}/detail", timeout=120.0
+    )
 
 
-@router.post("/upload/{folder_id}/{story_id}")
-async def upload_cover(folder_id: str, story_id: str) -> JSONResponse:
-    return await _proxy_post(f"/api/drive-sync/cover-update/upload/{folder_id}/{story_id}")
+@router.post("/update-chapter/{story_id}/{folder_id}/{chapter_number}")
+async def update_chapter_title(
+    story_id: str, folder_id: str, chapter_number: int
+) -> JSONResponse:
+    return await _proxy_post(
+        f"/api/drive-sync/title-update/update-chapter/{story_id}/{folder_id}/{chapter_number}"
+    )
+
+
+@router.post("/update-folder/{story_id}/{folder_id}")
+async def update_folder_titles(story_id: str, folder_id: str) -> JSONResponse:
+    return await _proxy_post(
+        f"/api/drive-sync/title-update/update-folder/{story_id}/{folder_id}"
+    )
+
+
+@router.post("/batch-update")
+async def batch_update(body: dict) -> JSONResponse:
+    return await _proxy_post("/api/drive-sync/title-update/batch-update", json_body=body)

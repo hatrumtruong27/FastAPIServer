@@ -29,7 +29,21 @@ _DRIVE_SYNC_CONFIG_EXAMPLE = {
 
 
 def _ds_url() -> str:
-    return os.environ.get("SERVICE_URLS_BedReadDriveSync", "http://localhost:8003").rstrip("/")
+    """Return BedReadDriveSync base URL, checking env vars and SERVICE_URLS JSON."""
+    override = os.environ.get("SERVICE_URLS_BedReadDriveSync")
+    if override:
+        return override.rstrip("/")
+    urls_raw = os.environ.get("SERVICE_URLS", "{}")
+    try:
+        import json
+        service_urls = json.loads(urls_raw)
+        if isinstance(service_urls, dict):
+            url = service_urls.get("BedReadDriveSync")
+            if url:
+                return str(url).rstrip("/")
+    except Exception:
+        pass
+    return "http://localhost:8003"
 
 
 def _extract_json_name(service_account_json_path: str | None) -> Optional[str]:
